@@ -11,34 +11,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Node 20
+      - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Java 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
           cmdline-tools-version: 11076708
           packages: build-tools;34.0.0 platforms;android-34 ndk;25.2.9519653
 
-      - name: Install
+      - name: Install dependencies
         run: |
           npm install --no-audit --no-fund
           npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 --save-exact --no-audit --no-fund
 
-      - name: Build
+      - name: Build web app
         run: |
           npm run build || npx vite build
           ls -la dist
 
-      - name: Capacitor
+      - name: Capacitor init
         run: |
           rm -rf android capacitor.config.* www public
           npx cap init "Meteory IA" "org.niquelgomez.meteoryia" --web-dir=dist
@@ -46,7 +46,7 @@ jobs:
           npx cap add android
           npx cap sync android
 
-      - name: Icon
+      - name: Copy custom icon
         run: |
           SRC=""
           test -f icono_meteory.png && SRC=icono_meteory.png
@@ -62,32 +62,38 @@ jobs:
             echo NO_ICON
           fi
 
-      - name: Permissions
+      - name: Patch AndroidManifest (permissions + label)
         run: |
-          M=android/app/src/main/AndroidManifest.xml
-          sed -i '/<uses-permission /d' $M
-          P='
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />'
-          sed -i "/<application/i\\$P" $M
-          sed -i 's/android:label="[^"]*"/android:label="Meteory IA"/g' $M
-          head -80 $M
+          node <<'JS'
+          const fs = require('fs');
+          const M = 'android/app/src/main/AndroidManifest.xml';
+          let xml = fs.readFileSync(M, 'utf8');
+          xml = xml.replace(/<uses-permission[^>]*>\s*/g, '');
+          const perms = [
+            'INTERNET',
+            'READ_MEDIA_IMAGES',
+            'READ_MEDIA_VIDEO',
+            'READ_EXTERNAL_STORAGE" android:maxSdkVersion="32',
+            'WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32',
+            'RECORD_AUDIO',
+            'SYSTEM_ALERT_WINDOW',
+            'SCHEDULE_EXACT_ALARM',
+            'USE_EXACT_ALARM',
+            'POST_NOTIFICATIONS',
+            'WAKE_LOCK',
+            'RECEIVE_BOOT_COMPLETED',
+            'MODIFY_AUDIO_SETTINGS',
+            'FOREGROUND_SERVICE',
+            'FOREGROUND_SERVICE_MEDIA_PROJECTION',
+            'FOREGROUND_SERVICE_MICROPHONE'
+          ].map(p => `<uses-permission android:name="android.permission.${p}" />`).join('\n    ');
+          xml = xml.replace(/(<application)/, perms + '\n    $1');
+          xml = xml.replace(/android:label="[^"]*"/, 'android:label="Meteory IA"');
+          fs.writeFileSync(M, xml);
+          console.log(xml.split('\n').slice(0,80).join('\n'));
+          JS
 
-      - name: Keystore
+      - name: Generate keystore
         run: |
           rm -f $HOME/meteory.keystore
           keytool -genkey -v -keystore $HOME/meteory.keystore -alias meteory -keyalg RSA -keysize 2048 -validity 10000 -storepass meteory123 -keypass meteory123 -dname "CN=Niquel Gomez, OU=Meteory IA, O=Dev, L=Cochabamba, ST=Cochabamba, C=BO"
@@ -97,15 +103,15 @@ jobs:
           cd android
           ./gradlew assembleRelease -Pandroid.injected.signing.store.file=$HOME/meteory.keystore -Pandroid.injected.signing.store.password=meteory123 -Pandroid.injected.signing.key.alias=meteory -Pandroid.injected.signing.key.password=meteory123 -PabiFilters=arm64-v8a
 
-      - name: Final APK
+      - name: Prepare final APK
         run: |
           mkdir -p APK_FINAL
           ORIG=$(find android/app/build/outputs/apk -name "*.apk" | head -1)
-          test -z "$ORIG" && echo APK_FAIL && exit 1
+          if [ -z "$ORIG" ]; then echo APK_FAIL; exit 1; fi
           cp $ORIG APK_FINAL/Meteory-IA-v1.0.1-arm64-v8a.apk
           ls -lh APK_FINAL
 
-      - name: Upload
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Meteory-IA-v1.0.1-APK-LISTO
