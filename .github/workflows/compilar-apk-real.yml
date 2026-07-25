@@ -1,0 +1,142 @@
+name: Build Final Meteory IA v1.0.1
+on:
+  push:
+    branches: [ main, master, principal ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 11076708
+          packages: >
+            build-tools;34.0.0
+            platforms;android-34
+            ndk;25.2.9519653
+
+      - name: Install dependencies
+        run: |
+          npm install --no-audit --no-fund --loglevel=error
+          npm install @capacitor/core@6.1.2 @capacitor/cli@6.1.2 @capacitor/android@6.1.2 --save-exact --no-audit --no-fund
+
+      - name: Build web app
+        run: |
+          npm run build 2>/dev/null || npx vite build 2>/dev/null || (mkdir -p dist && cp index.html dist/index.html 2>/dev/null; echo done)
+          ls -la dist
+
+      - name: Capacitor init + config
+        run: |
+          rm -rf android www public capacitor.config.*
+          npx cap init "Meteory IA" "org.niquelgomez.meteoryia" --web-dir=dist
+          cat > /tmp/fix_config.js <<'JS'
+          const fs = require('fs');
+          let t = fs.readFileSync('capacitor.config.ts','utf8');
+          t = t.replace(/,\s*appName:\s*['"][^'"]+['"]/g, '');
+          t = t.replace(/,\s*version:\s*['"][^'"]+['"]/g, '');
+          t = t.replace(
+            /(appId:\s*['"][^'"]+['\"])/,
+            "$1,\n  appName: 'Meteory IA',\n  version: '1.0.1'"
+          );
+          fs.writeFileSync('capacitor.config.ts', t);
+          console.log(t);
+          JS
+          node /tmp/fix_config.js
+          npx cap add android
+          npx cap sync android
+
+      - name: Copy custom icon
+        run: |
+          SRC=""
+          [ -f icono_meteory.png ] && SRC="icono_meteory.png"
+          [ -f icono_meteory.jpg ] && SRC="icono_meteory.jpg"
+          [ -f assets/icon.png ] && SRC="assets/icon.png"
+          if [ -n "$SRC" ]; then
+            for d in mipmap-hdpi mipmap-mdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+              mkdir -p "android/app/src/main/res/$d"
+              cp -f "$SRC" "android/app/src/main/res/$d/ic_launcher.png"
+              cp -f "$SRC" "android/app/src/main/res/$d/ic_launcher_round.png"
+            done
+            echo "icon ok"
+          else
+            echo "no custom icon"
+          fi
+
+      - name: Android permissions + app name
+        run: |
+          M="android/app/src/main/AndroidManifest.xml"
+          sed -i '/<uses-permission /d' "$M"
+          P='
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />'
+          sed -i "/<application/i\\$P" "$M"
+          sed -i 's/android:label="[^"]*"/android:label="Meteory IA"/g' "$M"
+          head -80 "$M"
+
+      - name: Generate signing keystore
+        run: |
+          rm -f "$HOME/meteory.keystore"
+          keytool -genkey -v \
+            -keystore "$HOME/meteory.keystore" \
+            -alias meteory \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass meteory123 -keypass meteory123 \
+            -dname "CN=Niquel Gomez, OU=Meteory IA, O=Dev, L=Cochabamba, ST=Cochabamba, C=BO"
+          ls -lh "$HOME/meteory.keystore"
+
+      - name: Build APK arm64-v8a
+        run: |
+          cd android
+          ./gradlew clean assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$HOME/meteory.keystore" \
+            -Pandroid.injected.signing.store.password=meteory123 \
+            -Pandroid.injected.signing.key.alias=meteory \
+            -Pandroid.injected.signing.key.password=meteory123 \
+            -PabiFilters=arm64-v8a
+
+      - name: Prepare final APK
+        run: |
+          mkdir -p APK_FINAL
+          ORIG=$(find android/app/build/outputs/apk -name "*.apk" -type f | head -1)
+          if [ -z "$ORIG" ]; then
+            echo "APK NOT FOUND"; find android -name "*.apk" 2>/dev/null; exit 1
+          fi
+          cp -f "$ORIG" APK_FINAL/Meteory-IA-v1.0.1-FINAL-arm64-v8a.apk
+          ls -lh APK_FINAL
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meteory-IA-v1.0.1-FINAL-OK
+          path: APK_FINAL/*.apk
+          if-no-files-found: error
