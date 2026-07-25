@@ -1,0 +1,6 @@
+{
+  "name": "Meteory IA v1.0.1",
+  "description": "Aplicación Android de IA conversacional Meteory IA v1.0.1 por Niquel Gómez con memoria local permanente, control de internet, análisis de archivos y 45% semi-consciencia.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
