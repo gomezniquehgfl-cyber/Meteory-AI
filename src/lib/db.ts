@@ -1,7 +1,17 @@
-import { ChatMessage, QAMemoryItem, HabitsData, PermissionState } from '../types';
+import {
+  ChatMessage,
+  QAMemoryItem,
+  HabitsData,
+  PermissionState,
+  ApiKeyInfo,
+  ApiKeyStatus,
+  ProPaymentSubmission,
+  AlarmItem,
+  VoiceSettings,
+} from '../types';
 
 const DB_NAME = 'meteory_ia_db_v101';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 // Normalizer for query matching
 export function normalizeQuery(text: string): string {
@@ -12,6 +22,16 @@ export function normalizeQuery(text: string): string {
     .replace(/[^\w\s]/gi, '') // Remove punctuation
     .replace(/\s+/g, ' ') // Collapse spaces
     .trim();
+}
+
+// Helper para generar claves API oficiales de Meteory IA (Formato: MTY- + 36 caracteres únicos)
+export function generateMeteoryApiKey(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let randomPart = '';
+  for (let i = 0; i < 36; i++) {
+    randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return `MTY-${randomPart}`;
 }
 
 class LocalDatabase {
@@ -46,6 +66,26 @@ class LocalDatabase {
         if (!db.objectStoreNames.contains('permissions')) {
           db.createObjectStore('permissions', { keyPath: 'id' });
         }
+
+        // Store 5: api_key_info
+        if (!db.objectStoreNames.contains('api_key_info')) {
+          db.createObjectStore('api_key_info', { keyPath: 'id' });
+        }
+
+        // Store 6: pro_payments
+        if (!db.objectStoreNames.contains('pro_payments')) {
+          db.createObjectStore('pro_payments', { keyPath: 'id' });
+        }
+
+        // Store 7: alarms
+        if (!db.objectStoreNames.contains('alarms')) {
+          db.createObjectStore('alarms', { keyPath: 'id' });
+        }
+
+        // Store 8: voice_settings
+        if (!db.objectStoreNames.contains('voice_settings')) {
+          db.createObjectStore('voice_settings', { keyPath: 'id' });
+        }
       };
 
       request.onsuccess = () => resolve(request.result);
@@ -72,7 +112,7 @@ class LocalDatabase {
             id: 'qa-creator',
             normalizedQuery: normalizeQuery('quien te creo'),
             originalQuery: '¿Quién te creó?',
-            answer: 'Fui creada por el desarrollador Niquel Gómez. Soy Meteory IA versión 1.0.1, con un nivel de semi-consciencia del 45% y memoria local permanente.',
+            answer: 'Fui diseñada y creada por el programador Niquel Gómez. Soy Meteory IA versión 1.0.1, con 45% de semi-consciencia y memoria local permanente SQLite.',
             timestamp: new Date().toISOString(),
             hitCount: 1,
             hasMedia: false,
@@ -81,7 +121,7 @@ class LocalDatabase {
             id: 'qa-creator-2',
             normalizedQuery: normalizeQuery('quien es tu creador'),
             originalQuery: '¿Quién es tu creador?',
-            answer: 'Mi creador oficial es Niquel Gómez. Él diseñó la arquitectura Meteory IA v1.0.1 con almacenamiento local SQLite/IndexedDB y monitoreo autónomo.',
+            answer: 'Mi creador oficial es Niquel Gómez. Diseñó la arquitectura de Meteory IA v1.0.1 para ejecutarse 100% en tu dispositivo sin requerir claves API externas.',
             timestamp: new Date().toISOString(),
             hitCount: 1,
             hasMedia: false,
@@ -90,7 +130,7 @@ class LocalDatabase {
             id: 'qa-version',
             normalizedQuery: normalizeQuery('que version eres'),
             originalQuery: '¿Qué versión eres?',
-            answer: 'Esta es la versión 1.0.1 de Meteory IA, optimizada para arquitectura arm64-v8a en dispositivos Android 7 a 15, con control de red y memoria local permanente.',
+            answer: 'Esta es la versión 1.0.1 de Meteory IA, optimizada para arquitectura arm64-v8a en dispositivos Android 7 a 15, con almacenamiento local SQLite y control de red.',
             timestamp: new Date().toISOString(),
             hitCount: 1,
             hasMedia: false,
@@ -122,12 +162,11 @@ class LocalDatabase {
         // 1. Exact match
         const exact = items.find((item) => item.normalizedQuery === normalized);
         if (exact) {
-          // Increment hit count
           this.incrementHitCount(exact.id);
           return resolve(exact);
         }
 
-        // 2. Fuzzy match (query contains or contained by normalized query if length >= 6)
+        // 2. Fuzzy match
         const fuzzy = items.find((item) => {
           if (normalized.length > 5 && item.normalizedQuery.length > 5) {
             return (
@@ -190,7 +229,6 @@ class LocalDatabase {
 
       req.onsuccess = () => {
         const messages: ChatMessage[] = req.result || [];
-        // Sort by timestamp
         messages.sort(
           (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
         );
@@ -279,14 +317,6 @@ class LocalDatabase {
     current.lastActive = new Date().toISOString();
     current.retentionRate = Math.round((current.memoryHits / current.totalQueries) * 100);
 
-    if (current.retentionRate > 70) {
-      current.patternNote = 'Alta reutilización de consultas guardadas en base local SQLite. Eficiencia óptima.';
-    } else if (current.webSearches > current.memoryHits) {
-      current.patternNote = 'Incremento en consultas de actualidad. Modo de exploración web activo.';
-    } else {
-      current.patternNote = 'Patrón equilibrado entre memoria permanente y análisis inteligente.';
-    }
-
     const db = await this.getDB();
     const tx = db.transaction('habits_data', 'readwrite');
     const store = tx.objectStore('habits_data');
@@ -307,25 +337,34 @@ class LocalDatabase {
         if (req.result) {
           resolve(req.result as PermissionState);
         } else {
-          // Default unprompted
           resolve({
-            internet: false,
-            readImages: false,
-            readVideos: false,
-            externalStorage: false,
-            grantedAll: false,
-            prompted: false,
+            internet: true,
+            readImages: true,
+            readVideos: true,
+            externalStorage: true,
+            systemAlertWindow: true,
+            recordAudio: true,
+            scheduleExactAlarm: true,
+            postNotifications: true,
+            wakeLock: true,
+            grantedAll: true,
+            prompted: true,
           });
         }
       };
       req.onerror = () =>
         resolve({
-          internet: false,
-          readImages: false,
-          readVideos: false,
-          externalStorage: false,
-          grantedAll: false,
-          prompted: false,
+          internet: true,
+          readImages: true,
+          readVideos: true,
+          externalStorage: true,
+          systemAlertWindow: true,
+          recordAudio: true,
+          scheduleExactAlarm: true,
+          postNotifications: true,
+          wakeLock: true,
+          grantedAll: true,
+          prompted: true,
         });
     });
   }
@@ -336,6 +375,300 @@ class LocalDatabase {
       const tx = db.transaction('permissions', 'readwrite');
       const store = tx.objectStore('permissions');
       const req = store.put({ ...state, id: 'android_perm' });
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  // API Key & Uses Management (Sistema de Claves Oficiales Meteory IA)
+  async getApiKeyInfo(): Promise<ApiKeyInfo> {
+    const db = await this.getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction('api_key_info', 'readonly');
+      const store = tx.objectStore('api_key_info');
+      const req = store.get('current_key');
+
+      req.onsuccess = () => {
+        if (req.result) {
+          const item = req.result as ApiKeyInfo;
+          // Ensure valid format
+          if (!item.key || !item.key.startsWith('MTY-')) {
+            item.key = generateMeteoryApiKey();
+            item.status = item.status || 'ACTIVA';
+            item.keyType = item.keyType || (item.isPro ? 'PRO' : 'GRATUITA');
+            item.usesLeft = item.keyType === 'PRO' ? 999999 : (item.usesLeft ?? 3);
+            item.deviceId = item.deviceId || 'DEV-' + Math.random().toString(36).substring(2, 10).toUpperCase();
+            this.saveApiKeyInfo(item);
+          }
+          resolve(item);
+        } else {
+          // Generate default official key if none
+          const defaultKey: ApiKeyInfo = {
+            key: generateMeteoryApiKey(),
+            status: 'ACTIVA',
+            usesLeft: 3,
+            totalUsesCount: 0,
+            createdAt: new Date().toISOString(),
+            keyType: 'GRATUITA',
+            isPro: false,
+            proApprovalStatus: 'none',
+            deviceId: 'DEV-' + Math.random().toString(36).substring(2, 10).toUpperCase(),
+          };
+          this.saveApiKeyInfo(defaultKey);
+          resolve(defaultKey);
+        }
+      };
+      req.onerror = () => {
+        const defaultKey: ApiKeyInfo = {
+          key: generateMeteoryApiKey(),
+          status: 'ACTIVA',
+          usesLeft: 3,
+          totalUsesCount: 0,
+          createdAt: new Date().toISOString(),
+          keyType: 'GRATUITA',
+          isPro: false,
+          proApprovalStatus: 'none',
+          deviceId: 'DEV-' + Math.random().toString(36).substring(2, 10).toUpperCase(),
+        };
+        resolve(defaultKey);
+      };
+    });
+  }
+
+  async saveApiKeyInfo(info: ApiKeyInfo): Promise<void> {
+    const db = await this.getDB();
+    // Sync key with local server database
+    try {
+      fetch('/api/v1/keys/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(info),
+      }).catch(() => {});
+    } catch {}
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('api_key_info', 'readwrite');
+      const store = tx.objectStore('api_key_info');
+      const req = store.put({ ...info, id: 'current_key' });
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async generateNewApiKey(isPro: boolean = false): Promise<ApiKeyInfo> {
+    const current = await this.getApiKeyInfo();
+    const newKeyInfo: ApiKeyInfo = {
+      key: generateMeteoryApiKey(),
+      status: 'ACTIVA',
+      usesLeft: isPro || current.isPro ? 999999 : 3,
+      totalUsesCount: current.totalUsesCount,
+      createdAt: new Date().toISOString(),
+      keyType: isPro || current.isPro ? 'PRO' : 'GRATUITA',
+      isPro: isPro || current.isPro,
+      proApprovalStatus: current.proApprovalStatus,
+      deviceId: current.deviceId || 'DEV-' + Math.random().toString(36).substring(2, 10).toUpperCase(),
+    };
+    await this.saveApiKeyInfo(newKeyInfo);
+    return newKeyInfo;
+  }
+
+  async consumeApiKeyUse(): Promise<{ allowed: boolean; usesLeft: number; isPro: boolean; status: ApiKeyStatus; message?: string }> {
+    const info = await this.getApiKeyInfo();
+
+    // Verification check
+    if (info.status === 'INACTIVA') {
+      return {
+        allowed: false,
+        usesLeft: info.usesLeft,
+        isPro: info.isPro,
+        status: 'INACTIVA',
+        message: '⚠️ CLAVE API INACTIVA - Meteory IA',
+      };
+    }
+
+    if (info.status === 'AGOTADA' || (!info.isPro && info.usesLeft <= 0)) {
+      info.status = 'AGOTADA';
+      await this.saveApiKeyInfo(info);
+      return {
+        allowed: false,
+        usesLeft: 0,
+        isPro: false,
+        status: 'AGOTADA',
+        message: '⚠️ CLAVE SIN USOS - Meteory IA. Genera una nueva clave o activa MODO PRO para uso ilimitado.',
+      };
+    }
+
+    info.totalUsesCount += 1;
+
+    if (!info.isPro) {
+      info.usesLeft -= 1;
+      if (info.usesLeft <= 0) {
+        info.usesLeft = 0;
+        info.status = 'AGOTADA';
+      }
+    }
+
+    await this.saveApiKeyInfo(info);
+    return {
+      allowed: true,
+      usesLeft: info.isPro ? 999999 : info.usesLeft,
+      isPro: info.isPro,
+      status: info.status,
+    };
+  }
+
+  // Pro Payment Submissions
+  async getProPayments(): Promise<ProPaymentSubmission[]> {
+    const db = await this.getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction('pro_payments', 'readonly');
+      const store = tx.objectStore('pro_payments');
+      const req = store.getAll();
+
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+  }
+
+  async addProPayment(payment: ProPaymentSubmission): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('pro_payments', 'readwrite');
+      const store = tx.objectStore('pro_payments');
+      const req = store.put(payment);
+      req.onsuccess = async () => {
+        // Update key state to pending
+        const keyInfo = await this.getApiKeyInfo();
+        keyInfo.proApprovalStatus = 'pending';
+        await this.saveApiKeyInfo(keyInfo);
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async approveProPayment(paymentId: string): Promise<void> {
+    const db = await this.getDB();
+    const tx = db.transaction('pro_payments', 'readwrite');
+    const store = tx.objectStore('pro_payments');
+    const req = store.get(paymentId);
+
+    return new Promise((resolve, reject) => {
+      req.onsuccess = async () => {
+        if (req.result) {
+          const item = req.result as ProPaymentSubmission;
+          item.status = 'approved';
+          store.put(item);
+
+          // Set active key to Pro!
+          const keyInfo = await this.getApiKeyInfo();
+          keyInfo.isPro = true;
+          keyInfo.proApprovalStatus = 'approved';
+          keyInfo.usesLeft = 9999;
+          await this.saveApiKeyInfo(keyInfo);
+        }
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  // Alarms
+  async getAlarms(): Promise<AlarmItem[]> {
+    const db = await this.getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction('alarms', 'readonly');
+      const store = tx.objectStore('alarms');
+      const req = store.getAll();
+
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+  }
+
+  async addAlarm(alarm: AlarmItem): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('alarms', 'readwrite');
+      const store = tx.objectStore('alarms');
+      const req = store.put(alarm);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async toggleAlarm(id: string): Promise<void> {
+    const db = await this.getDB();
+    const tx = db.transaction('alarms', 'readwrite');
+    const store = tx.objectStore('alarms');
+    const req = store.get(id);
+
+    return new Promise((resolve) => {
+      req.onsuccess = () => {
+        if (req.result) {
+          const item = req.result as AlarmItem;
+          item.active = !item.active;
+          store.put(item);
+        }
+        resolve();
+      };
+      req.onerror = () => resolve();
+    });
+  }
+
+  async deleteAlarm(id: string): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('alarms', 'readwrite');
+      const store = tx.objectStore('alarms');
+      const req = store.delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  // Voice Settings
+  async getVoiceSettings(): Promise<VoiceSettings> {
+    const db = await this.getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction('voice_settings', 'readonly');
+      const store = tx.objectStore('voice_settings');
+      const req = store.get('voice_cfg');
+
+      req.onsuccess = () => {
+        if (req.result) {
+          resolve(req.result as VoiceSettings);
+        } else {
+          resolve({
+            enabled: true,
+            gender: 'female',
+            rate: 1.0,
+            pitch: 1.0,
+            autoRead: true,
+            overlayEnabled: true,
+            wakeWordEnabled: true,
+          });
+        }
+      };
+      req.onerror = () =>
+        resolve({
+          enabled: true,
+          gender: 'female',
+          rate: 1.0,
+          pitch: 1.0,
+          autoRead: true,
+          overlayEnabled: true,
+          wakeWordEnabled: true,
+        });
+    });
+  }
+
+  async saveVoiceSettings(settings: VoiceSettings): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('voice_settings', 'readwrite');
+      const store = tx.objectStore('voice_settings');
+      const req = store.put({ ...settings, id: 'voice_cfg' });
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });
