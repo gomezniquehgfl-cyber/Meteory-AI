@@ -1,0 +1,98 @@
+name: Compilar APK REAL Meteory IA v1.0.1
+on:
+  push:
+    branches: [ main, master, principal ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Descargar tu código
+        uses: actions/checkout@v4
+
+      - name: 🟢 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: ☕ Java 17 (Android)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: 🤖 Android SDK + NDK oficiales
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 11076708
+          packages: >
+            build-tools;34.0.0
+            platforms;android-34
+            ndk;25.2.9519653
+
+      - name: 📦 Instalar dependencias + Capacitor v6 FIJADO
+        run: |
+          npm install
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 --save-exact
+
+      - name: 🏗️ Construir app → carpeta dist
+        run: |
+          npm run build || npx vite build
+
+      - name: ⚡ Capacitor + versión 1.0.1 (ARCHIVO .ts, NO .json)
+        run: |
+          # 1) Inicializar SIN --version (Capacitor 6 no lo acepta)
+          npx cap init "Meteory IA" "org.niquelgomez.meteoryia" --web-dir=dist
+
+          # 2) ✅ ARREGLO DEFINITIVO: editamos capacitor.config.ts (el que realmente existe)
+          node -e "
+            const fs = require('fs');
+            const f = 'capacitor.config.ts';
+            let t = fs.readFileSync(f, 'utf8');
+            // Insertar version: '1.0.1' justo después de appId
+            t = t.replace(
+              /(appId:\s*['\"][^'\"]+['\"])/,
+              \"\$1,\\n  version: '1.0.1'\"
+            );
+            fs.writeFileSync(f, t);
+            console.log('✅ VERSIÓN 1.0.1 APLICADA');
+            console.log('---');
+            console.log(t);
+          "
+
+          # 3) Crear proyecto Android nativo
+          npx cap add android
+          npx cap sync
+
+      - name: 🔑 Permisos Android NATIVOS REALES
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i '/<application/i\
+            <uses-permission android:name="android.permission.INTERNET" />\n\
+            <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\n\
+            <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\n\
+            <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n\
+            <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n' $M
+
+      - name: 📱 COMPILAR APK ARM64-v8a (Honor X8b · Android 14)
+        run: |
+          cd android
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$ANDROID_HOME/debug.keystore \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android
+
+      - name: ✅ APK final lista
+        run: |
+          mkdir -p APK_FINAL
+          cp android/app/build/outputs/apk/release/*.apk APK_FINAL/Meteory-IA-v1.0.1-NATIVO-arm64-v8a.apk
+          ls -lh APK_FINAL/
+
+      - name: ⬆️ Subir APK instalable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meteory-IA-v1.0.1-APK-REAL
+          path: APK_FINAL/*.apk
+          if-no-files-found: error
